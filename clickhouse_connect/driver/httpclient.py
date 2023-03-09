@@ -297,7 +297,7 @@ class HttpClient(Client):
         return result
 
     def _error_handler(self, response: HTTPResponse, retried: bool = False) -> None:
-        err_str = f'HTTPDriver for {self.url} returned response code {response.status})'
+        err_str = f'HTTPDriver for {self.url} returned response code {response.status}'
         err_content = get_response_data(response)
         if err_content:
             err_msg = err_content.decode(errors='backslashreplace')
