@@ -10,6 +10,7 @@ from clickhouse_connect.driver import Client
 from clickhouse_connect.driver.exceptions import DataError
 from clickhouse_connect.driver.options import np, pd
 from tests.helpers import random_query
+from tests.integration_tests.conftest import TestConfig
 from tests.integration_tests.datasets import null_ds, null_ds_columns, null_ds_types
 
 pytestmark = pytest.mark.skipif(pd is None, reason='Pandas package not installed')
@@ -54,6 +55,7 @@ def test_pandas_nulls(test_client: Client, table_context: Callable):
         assert pd.isna(result_df.iloc[1]['dt'])
         assert pd.isna(result_df.iloc[2]['flt'])
         assert pd.isna(result_df.iloc[2]['num'])
+        assert pd.isnull(result_df.iloc[3]['flt'])
         assert result_df['num'].dtype.name == 'Int32'
         if test_client.protocol_version:
             assert isinstance(result_df['dt'].dtype, pd.core.dtypes.dtypes.DatetimeTZDtype)
@@ -93,12 +95,12 @@ def test_pandas_context_inserts(test_client: Client, table_context: Callable):
         insert_context = test_client.create_insert_context('test_pandas_multiple', df.columns)
         insert_context.data = df
         test_client.data_insert(insert_context)
-        assert test_client.command('SELECT count() FROM test_pandas_multiple') == 3
+        assert test_client.command('SELECT count() FROM test_pandas_multiple') == 4
         next_df = pd.DataFrame(
             [['key4', -415, None, 'value4', datetime(2022, 7, 4, 15, 33, 4, 5233), date(1999, 12, 31)]],
             columns=null_ds_columns)
         test_client.insert_df(df=next_df, context=insert_context)
-        assert test_client.command('SELECT count() FROM test_pandas_multiple') == 4
+        assert test_client.command('SELECT count() FROM test_pandas_multiple') == 5
         assert df.equals(source_df)
 
 
@@ -247,15 +249,18 @@ def test_pandas_date32(test_client: Client, table_context:Callable):
 
 
 def test_pandas_row_df(test_client: Client, table_context:Callable):
-    with table_context('test_pandas_row_df', ['key UInt64', 'dt DateTime64(6)']):
+    with table_context('test_pandas_row_df', ['key UInt64', 'dt DateTime64(6)', 'fs FixedString(5)']):
         df = pd.DataFrame({'key': [1, 2],
-                          'dt': [pd.Timestamp(2023, 5, 4, 10, 20), pd.Timestamp(2023, 10, 15, 14, 50, 2, 4038)]})
+                          'dt': [pd.Timestamp(2023, 5, 4, 10, 20), pd.Timestamp(2023, 10, 15, 14, 50, 2, 4038)],
+                           'fs': ['seven', 'bit']})
         df = df.iloc[1:]
         source_df = df.copy()
         test_client.insert_df('test_pandas_row_df', df)
-        result_df = test_client.query_df('SELECT * FROM test_pandas_row_df')
+        result_df = test_client.query_df('SELECT * FROM test_pandas_row_df', column_formats={'fs': 'string'})
+        assert str(result_df.dtypes[2]) == 'string'
         assert result_df.iloc[0]['key'] == 2
         assert result_df.iloc[0]['dt'] == pd.Timestamp(2023, 10, 15, 14, 50, 2, 4038)
+        assert result_df.iloc[0]['fs'] == 'bit'
         assert len(result_df) == 1
         assert source_df.equals(df)
 
@@ -271,3 +276,11 @@ def test_pandas_null_strings(test_client: Client, table_context:Callable):
         df = pd.DataFrame([row, row2])
         with pytest.raises(DataError):
             test_client.insert_df('test_pandas_null_strings', df)
+
+
+def test_pandas_small_blocks(test_config: TestConfig, test_client: Client):
+    if test_config.cloud:
+        pytest.skip('Skipping performance test in ClickHouse Cloud')
+    res = test_client.query_df('SELECT number, randomString(512) FROM numbers(1000000)',
+                               settings={'max_block_size': 250})
+    assert len(res) == 1000000

@@ -1,3 +1,4 @@
+from pathlib import Path
 from time import sleep
 from typing import Callable
 
@@ -86,12 +87,16 @@ def test_session_params(test_config: TestConfig):
 def test_dsn_config(test_config: TestConfig):
     session_id = 'TEST_DSN_SESSION_' + test_config.test_database
     dsn = (f'clickhousedb://{test_config.username}:{test_config.password}@{test_config.host}:{test_config.port}' +
-           f'/{test_config.test_database}?session_id={session_id}')
+           f'/{test_config.test_database}?session_id={session_id}&show_clickhouse_errors=false')
     client = create_client(dsn=dsn)
     assert client.get_client_setting('session_id') == session_id
     count = client.command('SELECT count() from system.tables')
     assert client.database == test_config.test_database
     assert count > 0
+    try:
+        client.query('SELECT nothing')
+    except DatabaseError as ex:
+        assert 'returned an error' in str(ex)
     client.close()
 
 
@@ -99,6 +104,9 @@ def test_get_columns_only(test_client: Client):
     result = test_client.query('SELECT name, database FROM system.tables LIMIT 0')
     assert result.column_names == ('name', 'database')
     assert len(result.result_set) == 0
+
+    test_client.query('CREATE TABLE IF NOT EXISTS test_zero_insert (v Int8) ENGINE MergeTree() ORDER BY tuple()')
+    test_client.query('INSERT INTO test_zero_insert SELECT 1 LIMIT 0')
 
 
 def test_no_limit(test_client: Client):
@@ -217,3 +225,22 @@ def test_str_as_bytes(test_client: Client, table_context: Callable):
         assert result_set[1][0] == b'str_0'
         assert result_set[1][4] == b'\x05\x78\x18'
         assert result_set[2][4] == b'\x10\x30\x34'
+
+
+def test_embedded_binary(test_client: Client):
+    binary_params = {'$xx$': 'col1,col2\n100,700'.encode()}
+    result = test_client.raw_query(
+        'SELECT col2, col1 FROM format(CSVWithNames, $xx$)', parameters=binary_params)
+    assert result == b'700\t100\n'
+
+    movies_file = f'{Path(__file__).parent}/movies.parquet'
+    with open(movies_file, 'rb') as f:  # read bytes
+        data = f.read()
+    binary_params = {'$parquet$': data}
+    result = test_client.query(
+        'SELECT movie, rating FROM format(Parquet, $parquet$) ORDER BY movie', parameters=binary_params)
+    assert result.first_item['movie'] == '12 Angry Men'
+
+    binary_params = {'$mult$': 'foobar'.encode()}
+    result = test_client.query("SELECT $mult$ as m1, $mult$ as m2 WHERE m1 = 'foobar'", parameters=binary_params)
+    assert result.first_item['m2'] == 'foobar'

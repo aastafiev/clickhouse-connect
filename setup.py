@@ -13,7 +13,7 @@ try:
 except ImportError as ex:
     print('Cython Install Failed, Not Building C Extensions: ', ex)
     cythonize = None
-except Exception as ex:
+except Exception as ex:  # pylint: disable=broad-exception-caught
     print('Cython Build Failed, Not Building C Extensions: ', ex)
     cythonize = None
 
@@ -36,9 +36,10 @@ def run_setup(try_c: bool = True):
             version = version_file.readline()
     else:
         with open(os.path.join(project_dir, 'clickhouse_connect', '__version__.py'), encoding='utf-8') as version_file:
-            match = re.search(r"version\s*=\s*'(.+)'", version_file.read().strip())
+            file_version = version_file.read().strip()
+            match = re.search(r"version\s*=\s*'(.+)'", file_version)
             if match is None:
-                raise ValueError(f'invalid version in clickhouse_connect/__version__.py')
+                raise ValueError(f'invalid version {file_version} in clickhouse_connect/__version__.py')
             version = match.group(1)
 
     setup(
@@ -53,7 +54,7 @@ def run_setup(try_c: bool = True):
         package_data={'clickhouse_connect': ['VERSION', 'py.typed']},
         url='https://github.com/ClickHouse/clickhouse-connect',
         packages=find_packages(exclude=['tests*']),
-        python_requires='~=3.7',
+        python_requires='~=3.8',
         license='Apache License 2.0',
         install_requires=[
             'certifi',
@@ -68,6 +69,7 @@ def run_setup(try_c: bool = True):
             'pandas': ['pandas'],
             'arrow': ['pyarrow'],
             'orjson': ['orjson'],
+            'tzlocal': ['tzlocal>=4.0'],
         },
         tests_require=['pytest'],
         entry_points={
@@ -78,11 +80,12 @@ def run_setup(try_c: bool = True):
             'Development Status :: 4 - Beta',
             'Intended Audience :: Developers',
             'License :: OSI Approved :: Apache Software License',
-            'Programming Language :: Python :: 3.7',
             'Programming Language :: Python :: 3.8',
             'Programming Language :: Python :: 3.9',
             'Programming Language :: Python :: 3.10',
-            'Programming Language :: Python :: 3.11'
+            'Programming Language :: Python :: 3.11',
+            'Programming Language :: Python :: 3.12',
+            'Programming Language :: Python :: 3.13',
         ],
         **kwargs
     )
@@ -90,6 +93,7 @@ def run_setup(try_c: bool = True):
 
 try:
     run_setup()
+# pylint: disable=broad-exception-caught
 except (Exception, IOError, SystemExit) as e:
     print(f'Unable to compile C extensions for faster performance due to {e}, will use pure Python')
     run_setup(False)

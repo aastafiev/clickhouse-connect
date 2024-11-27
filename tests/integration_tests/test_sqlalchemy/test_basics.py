@@ -20,9 +20,8 @@ def test_dsn_config(test_engine: Engine):
     common.set_setting('invalid_setting_action', 'drop')
     client = test_engine.raw_connection().connection.client
     assert client.http.connection_pool_kw['cert_reqs'] == 'CERT_REQUIRED'
-    if client.min_version('23'):
-        assert 'use_skip_indexes' in client.params
-        assert 'allow_experimental_object_type' in client.params
+    assert 'use_skip_indexes' in client.params
+    assert client.params['http_max_field_name_size'] == '99999'
     assert client.query_limit == 2333
     assert client.compression == 'zstd'
 
@@ -39,6 +38,7 @@ def test_cursor(test_engine: Engine):
     assert cursor.description[0][0] == 'database'
     assert cursor.description[1][1] == 'String'
     assert len(getattr(cursor, 'data')) == 2
+    assert cursor.summary[0]["read_rows"] == '2'
     raw_conn.close()
 
 

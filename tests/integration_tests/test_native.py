@@ -1,6 +1,7 @@
 import decimal
+import os
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from ipaddress import IPv4Address, IPv6Address
 from typing import Callable
 
@@ -9,6 +10,7 @@ import pytest
 from clickhouse_connect.datatypes.format import set_default_formats, clear_default_format, set_read_format, \
     set_write_format
 from clickhouse_connect.driver import Client
+from clickhouse_connect.driver.common import coerce_bool
 
 
 def test_low_card(test_client: Client, table_context: Callable):
@@ -16,6 +18,17 @@ def test_low_card(test_client: Client, table_context: Callable):
         test_client.insert('native_test', [[55, 'TV1'], [-578328, 'TV38882'], [57372, 'Kabc/defXX']])
         result = test_client.query("SELECT * FROM native_test WHERE value_1 LIKE '%abc/def%'")
         assert len(result.result_set) == 1
+
+
+def test_low_card_uuid(test_client: Client, table_context: Callable):
+    with table_context('low_card_uuid', ['dt Date', 'low_card_uuid LowCardinality(UUID)']):
+        data = ([date(2023, 1, 1), '80397B00E0B248AFAF34AE11A5546A3B'],
+               [date(2024, 1, 1), '70397B00-E0B2-48AF-AF34-AE11A5546A3B'])
+        test_client.insert('low_card_uuid', data)
+        result = test_client.query("SELECT * FROM low_card_uuid order by dt").result_set
+        assert len(result) == 2
+        assert str(result[0][1]) == '80397b00-e0b2-48af-af34-ae11a5546a3b'
+        assert str(result[1][1]) == '70397b00-e0b2-48af-af34-ae11a5546a3b'
 
 
 def test_bare_datetime64(test_client: Client, table_context: Callable):
@@ -45,10 +58,10 @@ def test_nulls(test_client: Client, table_context: Callable):
         assert result[3] == (4, 'nonnull2', None)
 
 
-def test_json(test_client: Client, table_context: Callable):
-    if not test_client.min_version('22.6.1'):
-        pytest.skip('JSON test skipped for old version {test_client.server_version}')
-    with table_context('native_json_test', [
+def test_old_json(test_client: Client, table_context: Callable):
+    if not coerce_bool(os.environ.get('CLICKHOUSE_CONNECT_TEST_OLD_JSON_TYPE')):
+        pytest.skip('Deprecated JSON type not tested')
+    with table_context('old_json_test', [
         'key Int32',
         'value JSON',
         'e2 Int32',
@@ -58,12 +71,12 @@ def test_json(test_client: Client, table_context: Callable):
         jv3 = {'key3': 752, 'value.2': 'v2_rules', 'blank': None}
         njv2 = {'nk1': -302, 'nk2': {'sub1': 372, 'sub2': 'a string'}}
         njv3 = {'nk1': 5832.44, 'nk2': {'sub1': 47788382, 'sub2':'sub2val', 'sub3': 'sub3str', 'space key': 'spacey'}}
-        test_client.insert('native_json_test', [
+        test_client.insert('old_json_test', [
             [5, jv1, -44, None],
             [20, None, 5200, njv2],
             [25, jv3, 7302, njv3]])
 
-        result = test_client.query('SELECT * FROM native_json_test ORDER BY key')
+        result = test_client.query('SELECT * FROM old_json_test ORDER BY key')
         json1 = result.result_set[0][1]
         assert json1['HKD@spéçiäl'] == 'Special K'
         assert json1['key3'] == 0
@@ -97,7 +110,7 @@ def test_read_formats(test_client: Client, test_table_engine: str):
     row2 = (2, uuid2, 'short str', '10.44.75.20', ['74:382::3332', '8700:5200::5782:3992'], (7320, '252.18.4.50'))
     test_client.insert('read_format_test', [row1, row2])
 
-    result = test_client.query('SELECT * FROM read_format_test').result_set
+    result = test_client.query('SELECT * FROM read_format_test;;;').result_set
     assert result[0][1] == uuid1
     assert result[1][3] == IPv4Address('10.44.75.20')
     assert result[0][2] == b'\x35\x33\x30\x30\x35\x35\x37\x37\x37\x6b'
@@ -154,27 +167,14 @@ def test_tuple_inserts(test_client: Client, table_context: Callable):
     with table_context('insert_tuple_test', ['key Int32', 'named Tuple(fl Float64, `ns space` Nullable(String))',
                                              'unnamed Tuple(Float64, Nullable(String))']):
         data = [[1, (3.55, 'str1'), (555, None)], [2, (-43.2, None), (0, 'str2')]]
-        result = test_client.insert('insert_tuple_test', data)
-        assert 2 == result.written_rows
+        test_client.insert('insert_tuple_test', data, settings={'insert_deduplication_token': 5772})
 
         data = [[1, {'fl': 3.55, 'ns space': 'str1'}, (555, None)], [2, {'fl': -43.2}, (0, 'str2')]]
-        result = test_client.insert('insert_tuple_test', data)
-        assert 2 == result.written_rows
-
+        test_client.insert('insert_tuple_test', data, settings={'insert_deduplication_token': 5773})
         query_result = test_client.query('SELECT * FROM insert_tuple_test ORDER BY key').result_rows
+        assert len(query_result) == 4
         assert query_result[0] == query_result[1]
         assert query_result[2] == query_result[3]
-
-
-def test_point_inserts(test_client: Client, table_context: Callable):
-    with table_context('insert_point_test', ['key Int32', 'point Point']):
-        data = [[1, (3.55, 3.55)], [2, (4.55, 4.55)]]
-        result = test_client.insert('insert_point_test', data)
-        assert 2 == result.written_rows
-
-        query_result = test_client.query('SELECT * FROM insert_point_test ORDER BY key').result_rows
-        assert query_result[0] == (1, (3.55, 3.55))
-        assert query_result[1] == (2, (4.55, 4.55))
 
 
 def test_agg_function(test_client: Client, table_context: Callable):
@@ -211,3 +211,11 @@ def test_fixed_str_padding(test_client: Client, table_context: Callable):
         test_client.insert(table, [[3, '']])
         result = test_client.query(f'select * from {table} ORDER BY key')
         assert result.result_columns[1] == [b'abc', b'a\x00\x00', b'\x00\x00\x00']
+
+
+def test_nonstandard_column_names(test_client: Client, table_context: Callable):
+    table = 'пример_кириллица'
+    with table_context(table, 'колонка String') as t:
+        test_client.insert(t.table, (('привет',),))
+        result = test_client.query(f'SELECT * FROM {t.table}').result_set
+        assert result[0][0] == 'привет'

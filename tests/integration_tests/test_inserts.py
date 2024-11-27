@@ -12,8 +12,9 @@ def test_insert(test_client: Client, test_table_engine: str):
         test_client.command('DROP TABLE IF EXISTS test_system_insert SYNC')
     test_client.command(f'CREATE TABLE test_system_insert AS system.tables Engine {test_table_engine} ORDER BY name')
     tables_result = test_client.query('SELECT * from system.tables')
-    insert_result = test_client.insert(table='test_system_insert', column_names='*', data=tables_result.result_set)
-    assert int(tables_result.summary['read_rows']) == insert_result.written_rows
+    test_client.insert(table='test_system_insert', column_names='*', data=tables_result.result_set)
+    copy_result = test_client.command('SELECT count() from test_system_insert')
+    assert tables_result.row_count == copy_result
     test_client.command('DROP TABLE IF EXISTS test_system_insert')
 
 
@@ -23,6 +24,14 @@ def test_decimal_conv(test_client: Client, table_context: Callable):
         test_client.insert('test_num_conv', data)
         result = test_client.query('SELECT * FROM test_num_conv').result_set
         assert result == [(5, -182, 55.2), (57238478234, 77, -29.5773)]
+
+
+def test_float_decimal_conv(test_client: Client, table_context: Callable):
+    with table_context('test_float_to_dec_conv', ['col1 Decimal32(6)','col2 Decimal32(6)', 'col3 Decimal128(6)', 'col4 Decimal128(6)']):
+        data = [[0.492917, 0.49291700, 0.492917, 0.49291700]]
+        test_client.insert('test_float_to_dec_conv', data)
+        result = test_client.query('SELECT * FROM test_float_to_dec_conv').result_set
+        assert result == [(Decimal("0.492917"), Decimal("0.492917"), Decimal("0.492917"), Decimal("0.492917"))]
 
 
 def test_bad_data_insert(test_client: Client, table_context: Callable):
@@ -63,3 +72,22 @@ def test_column_names_spaces(test_client: Client, table_context: Callable):
         result = test_client.query('SELECT * FROM test_column_spaces').result_rows
         assert result[0][0] == 1
         assert result[1][1] == 'str 2'
+
+
+def test_numeric_conversion(test_client: Client, table_context: Callable):
+    with table_context('test_numeric_convert',
+                       columns=['key Int32', 'n_int Nullable(UInt64)', 'n_flt Nullable(Float64)']):
+        data = [[1, None, None], [2, '2', '5.32']]
+        test_client.insert('test_numeric_convert', data)
+        result = test_client.query('SELECT * FROM test_numeric_convert').result_rows
+        assert result[1][1] == 2
+        assert result[1][2] == float('5.32')
+        test_client.command('TRUNCATE TABLE test_numeric_convert')
+        data = [[0, '55', '532.48'], [1, None, None], [2, '2', '5.32']]
+        test_client.insert('test_numeric_convert', data)
+        result = test_client.query('SELECT * FROM test_numeric_convert').result_rows
+        assert result[0][1] == 55
+        assert result[0][2] == 532.48
+        assert result[1][1] is None
+        assert result[2][1] == 2
+        assert result[2][2] == 5.32

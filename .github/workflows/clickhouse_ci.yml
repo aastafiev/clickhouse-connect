@@ -8,15 +8,15 @@ on:
 jobs:
   head:
     runs-on: ubuntu-latest
-    name:  ClickHouse CI Tests
+    name: ClickHouse CI Tests
     env:
       CLICKHOUSE_CONNECT_TEST_DOCKER: 'False'
       CLICKHOUSE_CONNECT_TEST_FUZZ: 50
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: 3.11
       - name: Install pip
@@ -28,43 +28,17 @@ jobs:
       - name: "Add distribution info"  #  This lets SQLAlchemy find entry points
         run: python setup.py develop
 
-      - name: Run ClickHouse Container (LATEST)
-        run: docker run
-          -d
-          -p 8123:8123
-          --name clickhouse_latest
-          -v /var/lib/clickhouse
-          -v ${{ github.workspace }}/tests/integration_tests/test_config.xml:/etc/clickhouse-server/conf.d/test_config.xml
-          --ulimit nofile=262144:262144
-          clickhouse/clickhouse-server:latest
-      - name: Run LATEST tests
-        run: pytest tests/integration_tests
-      - name: stop latest container
-        run: docker stop clickhouse_latest
-      - name: remove latest container
-        run: docker remove clickhouse_latest
-
       - name: run ClickHouse Cloud tests
         env:
           CLICKHOUSE_CONNECT_TEST_PORT: 8443
-          CLICKHOUSE_CONNECT_TEST_INSERT_QUORUM: 3
-          CLICKHOUSE_CONNECT_TEST_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST }}
-          CLICKHOUSE_CONNECT_TEST_PASSWORD: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD }}
+          CLICKHOUSE_CONNECT_TEST_CLOUD: 'True'
+          CLICKHOUSE_CONNECT_TEST_HOST: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_HOST_SMT }}
+          CLICKHOUSE_CONNECT_TEST_PASSWORD: ${{ secrets.INTEGRATIONS_TEAM_TESTS_CLOUD_PASSWORD_SMT }}
         run: pytest tests/integration_tests
 
-      - name: Run ClickHouse Container (HEAD)
-        run: docker run
-          -d
-          -p 8123:8123
-          --name clickhouse_head
-          -v /var/lib/clickhouse
-          -v ${{ github.workspace }}/tests/integration_tests/test_config.xml:/etc/clickhouse-server/conf.d/test_config.xml
-          --ulimit nofile=262144:262144
-          clickhouse/clickhouse-server:head
-      - name: Run HEAD tests
+      - name: Run ClickHouse Container (LATEST)
+        run: CLICKHOUSE_CONNECT_TEST_CH_VERSION=latest docker compose up -d clickhouse
+      - name: Run LATEST tests
         run: pytest tests/integration_tests
-      - name: stop head container
-        run: docker stop clickhouse_head
-      - name: remove head container
-        run: docker remove clickhouse_head
-
+      - name: remove latest container
+        run: docker compose down -v

@@ -1,18 +1,289 @@
 # ClickHouse Connect ChangeLog
 
-### WARNING -- Python 3.7 EOL
-Official support for Python 3.7 ended on June 27, 2023.  As of the 0.6.5 release, clickhouse-connect will not test against
-Python 3.7, and in releases after January 1, 2024, all support for Python 3.7 will end, including 3.7 binary wheels.
+### WARNING -- Python 3.8 EOL
+Python 3.8 was EOL on 2024-10-07.  It is no longer tested, and versions after 2025-04-07 will not include Python
+3.8 wheel distributions.
 
-### WARNING -- Engine Spec removed from v0.6.x
-ClickHouse Connect has been included as an official Apache Superset database connector starting with release 2.1.0.
-As a result, the Superset Engine Spec has been removed from clickhouse-connect and is now maintained in main
-Superset project. However,if you need compatibility with older versions of Superset, you may need clickhouse-connect
-v0.5.25, which will dynamically load the EngineSpec from the clickhouse-connect project.
+### WARNING -- Impending Breaking Change - Server Settings in DSN
+When creating a DBAPI Connection method using the Connection constructor or a SQLAlchemy DSN, the library currently
+converts any unrecognized keyword argument/query parameter to a ClickHouse server setting. Starting in the next minor
+release (0.9.0), unrecognized arguments/keywords for these methods of creating a DBAPI connection will raise an exception
+instead of being passed as ClickHouse server settings. This is in conjunction with some refactoring in Client construction.
+The supported method of passing ClickHouse server settings is to prefix such arguments/query parameters with`ch_`.
 
-In any case, this should not affect the basic usage of Superset with ClickHouse.  If clickhouse-connect is included in
-your Superset installation, the ClickHouse datasource will be available with either the enhanced connection dialog
-or a standard SqlAlchemy DSN in the form of `clickhousedb://{username}:{password}@{host}:{port}`.
+## 0.8.7, 2024-11-21
+### Improvement
+- Added basic support for ClickHouse geometric types Ring, Polygon, MultiPolygon, LineString, and MultiLineString.
+Closes https://github.com/ClickHouse/clickhouse-connect/issues/427
+- 
+### Bug Fix
+- Settings/parameters from one Client will no longer leak into later client instantiations.  Fixes
+https://github.com/ClickHouse/clickhouse-connect/issues/426
+
+## 0.8.6, 2024-11-01
+### Bug Fixes
+- Correctly stream unchunked HTTP responses.  Fixes https://github.com/ClickHouse/clickhouse-connect/issues/417.
+- Don't use `wait_end_of_query` for any streaming requests.  Fixes https://github.com/ClickHouse/clickhouse-connect/issues/416
+
+## 0.8.5, 2024-10-24
+### Bug fix
+- Inserts into a Nullable integer/float column could throw an exception if the first value was `None` and the column
+required conversion to the numeric type (such as Python str to float).  This has been fixed.  Note that "mixed" Python
+types in an insert data set will still throw an exception (i.e., Python strings and ints should not be combined into
+the same column for insert.  Closes https://github.com/ClickHouse/clickhouse-connect/issues/414
+
+## 0.8.4, 2024-10-23
+### Improvement
+- Python 3.13 is now included in CI tests and 3.13 wheels are built for distribution.  Note that PyArrow is not yet
+available for Python 3.13.
+
+### Bug fixes
+- ClickHouse errors are now detected and throw an exception even if the HTTP status code returned by ClickHouse is a 200.
+This can happen when there is a long-running query (such as a large `INSERT INTO ... SELECT FROM ...`) and `send_progress_in_http_headers`
+is enabled to keep the HTTP connection open.
+- Pandas NA (which is equivalent to Float NaN for Float values) is now inserted as NULL into Nullable(Float*) columns.  Closes
+https://github.com/ClickHouse/clickhouse-connect/issues/412
+
+## 0.8.3, 2024-10-07
+### Improvement
+- Add an optional `executor_threads` argument to the `get_async_client` method.  This controls the number of concurrent
+threads that each AsyncClient has available for queries.  Defaults to "number of CPU cores plus four".  Closes
+https://github.com/ClickHouse/clickhouse-connect/issues/407
+
+## 0.8.2, 2024-10-04
+### Bug Fix
+- Ensure lz4 compression does not exit on an empty block.  May fix https://github.com/ClickHouse/clickhouse-connect/issues/403.
+
+### Improvement
+- Compress Arrow inserts (using pyarrow compression) if compression is set to `lz4` or `zstd`.  Closes https://github.com/ClickHouse/clickhouse-connect/issues/267.
+
+## 0.8.1, 2024-09-29
+### Bug Fix
+- Fixed an edge case where the HTTP buffer could theoretically return empty blocks.  
+
+## 0.8.0, 2024-09-26
+### Experimental Feature - "New" JSON/Dynamic/Variant DataTypes
+#### Usage Notes
+- JSON data can be inserted as either a Python dictionary or a JSON string containing a JSON object `{}`.  Other
+forms of JSON data are not supported
+- Valid formats for the JSON type are 'native', which returns a Python dictionary, or 'string', which returns a JSON string
+- Any value can be inserted into a Variant column, and ClickHouse will try to correctly determine the correct Variant
+Type for the value, based on its String representation.
+- More complete documentation for the new types will be provided in the future.
+
+#### Known limitations:
+- Each of these types must be enabled in the ClickHouse settings before using.  The "new" JSON type is available started
+with the 24.8 release
+- Returned JSON objects will only return the `max_dynamic_paths` number of elements (which defaults to 1024).  This
+will be fixed in a future release.
+- Inserts into `Dynamic` columns will always be the String representation of the Python value.  This will be fixed
+in a future release.
+- The implementation for the new types has not been optimized in C code, so performance may be somewhat slower than for
+simpler, established data types.
+
+This is the first time that a new `clickhouse_connect` features has been labeled "experimental", but these new
+datatypes are complex and still experimental in ClickHouse server.  Current test coverage for these types is also
+quite limited.  Please don't hesitate to report issues with the new types.
+
+### Bug Fixes
+- When operating ClickHouse Server in `strict` TLS mode, HTTPS connections [require](https://github.com/ClickHouse/poco/blob/master/NetSSL_OpenSSL/include/Poco/Net/Context.h#L84-L89) a client certificate even if that
+certificate is not used for authentication.  A new client parameter `tls_mode='strict'` can be used in this situation where
+username/password authentication is being used with client certificates.  Other valid values for the new `tls_mode` setting
+are `'proxy'` when TLS termination occurs at a proxy, and `'mutual'` to specify mutual TLS authentication is used by
+the ClickHouse server.  If `tls_mode` is not set, and a client certificate and key are provided, `mutual` is assumed.
+- The server timezone was not being used for parameter binding if parameters were sent as a list instead of a dictionary.
+This should fully fix the reopened https://github.com/ClickHouse/clickhouse-connect/issues/377.
+- String port numbers (such as from environmental variables) are now correctly interpreted to determine the correct interface/protocol.
+Fixes https://github.com/ClickHouse/clickhouse-connect/issues/395
+- Insert commands with a `SELECT FROM ... LIMIT 0` will no longer raise an exception.  Closes https://github.com/ClickHouse/clickhouse-connect/issues/389.
+
+### Improvements
+- Some low level errors for problems with Native format inserts and queries now include the relevant column name in the
+error message.  Thanks to [Angus Holder](https://github.com/angusholder) for the PR!
+- There is a new intermediate buffer for HTTP streaming/chunked queries.  The buffer will store raw data from the HTTP request
+until it is actually requested in a stream.  This allows some lag between reading the data from ClickHouse and processing
+the same data.  Previously, if processing the data stream fell 30 seconds behind the ClickHouse HTTP writes to the stream,
+the ClickHouse server would close the connection, aborting the query and stream processing.  This will now be mitigated by
+storing the data stream in the new intermediate buffer.  By default, this buffer is set to 10 megabytes, but for slow
+processing of large queries where memory is not an issue, the buffer size can be increasing using the new `common` setting
+`http_buffer_size`.  This is a fix in some cases of https://github.com/ClickHouse/clickhouse-connect/issues/399, but note that
+slow processing of large queries will still cause connection and processing failures if the data cannot be buffered.
+- It is now possible to correctly bind `DateTime64` type parameters when calling Client `query` methods through one of two approaches:
+  - Wrap the Python `datetime.datetime` value in the new DT64Param class, e.g.
+  ```python
+    query = 'SELECT {p1:DateTime64(3)}'  # Server side binding with dictionary
+    parameters={'p1': DT64Param(dt_value)}
+  
+    query = 'SELECT %s as string, toDateTime64(%s,6) as dateTime' # Client side binding with list 
+    parameters=['a string', DT64Param(datetime.now())]
+  ```
+  - If using a dictionary of parameter values, append the string `_64` to the parameter name
+  ```python
+    query = 'SELECT {p1:DateTime64(3)}, {a1:Array(DateTime(3))}'  # Server side binding with dictionary
+  
+    parameters={'p1_64': dt_value, 'a1_64': [dt_value1, dt_value2]}
+  ```
+  This closes https://github.com/ClickHouse/clickhouse-connect/issues/396, see also the similar issue https://github.com/ClickHouse/clickhouse-connect/issues/212
+
+
+## 0.7.19, 2024-08-23
+### Bug Fix
+- Insertion of large strings was triggering an exception. This has been fixed.
+
+## 0.7.18, 2024-07-30
+### Bug Fix
+- In some cases retrieving the os_user as part of the `client data` in the HTTP User-Agent header could throw an exception.  This
+has been fixed (os_user will not be sent in those cases).  Closes https://github.com/ClickHouse/clickhouse-connect/issues/380.
+
+## 0.7.17, 2024-07-24
+### Bug Fix
+- The client server_tz was not being correctly set if the server timezone was not UTC.  This should close https://github.com/ClickHouse/clickhouse-connect/issues/377
+
+### Improvement
+- The os user can now be sent as part of the User-Agent HTTP header.  To disable this functionality for privacy reasons,
+set the new common/global setting `send_os_user` to False.  Closes https://github.com/ClickHouse/clickhouse-connect/issues/371.
+
+## 0.7.16, 2024-07-08
+### Improvement
+- Added the `AsyncClient` wrapper which is intended for `asyncio` environment usage. `AsyncClient` has the same methods 
+with the same parameters as the standard `Client`, but they are coroutines when applicable. Internally, these methods 
+from the `Client` that perform I/O operations are wrapped in a 
+[run_in_executor](https://docs.python.org/3/library/asyncio-eventloop.html#asyncio.loop.run_in_executor) call. 
+See also the updated [run_async example](./examples/run_async.py).
+
+## 0.7.15, 2024-07-01
+### Bug Fix
+- If the ClickHouse server was behind an https proxy that required mutual TLS authentication, the client would incorrectly
+attempt to use ClickHouse mutual TLS instead and authentication would fail.  It should now be possible to authenticate
+correctly in this situation by settings the `verify` parameter to `proxy`.  This should close https://github.com/ClickHouse/clickhouse-connect/issues/370
+
+## 0.7.14, 2024-06-24
+### Bug Fix
+- Fix insert of UUID strings including dashes.  Closes #368
+
+## 0.7.13, 2024-06-24
+### Bug Fixes
+- Set required minimum version for optional tzlocal dependency.  Thanks to [drew-talon](https://github.com/drew-talon) for
+reporting the issue and submitting the fix.  Closes #360.
+- Extended the effect of the `show_clickhouse_errors` client setting to exclude showing hostname and port for errors
+when that setting is False.  Thanks to [Andy](https://github.com/andy1xx8) for the PR!
+
+### Improvement
+- Add the ability to bind arbitrary, "heredoc" data (including binary data) into the query, as described
+[here](https://clickhouse.com/docs/en/sql-reference/syntax#heredoc).  To use this functionality, use a single heredoc
+tag, such as `$my_tag$`, in the query, and add that tag and the associated data into the query method `parameters` argument.
+For some examples, see the `test_embedded_binary` test in [test_client.py](https://github.com/ClickHouse/clickhouse-connect/blob/main/tests/integration_tests/test_client.py).
+Closes #363.
+
+## 0.7.12, 2024-06-04
+### Bug Fix
+- When using `query_df` with a FixedString column with a read format of 'string' (and the default `query_df` setting
+`use_extended_dtypes=True`), the resulting column in the dataframe will now be correctly set to the (extended) String dtype.
+Fixes https://github.com/ClickHouse/clickhouse-connect/issues/356
+
+## 0.7.11, 2024-05-26
+### Improvement
+- Python or Pandas float value to ClickHouse Decimal now correctly rounds Float values for more accurate conversions.  Thanks
+to [Frederik Eychenié](https://github.com/feychenie) for the investigation and PR!
+
+## 0.7.10, 2024-05-22
+### Bug Fix
+- Clean up pandas series concatenation issue
+
+## 0.7.9, 2024-05-21
+### Bug Fixes 
+- query_df would raise a deprecation warning with recent Pandas version if there were empty blocks.  This should be fixed.
+https://github.com/ClickHouse/clickhouse-connect/issues/349
+- avoid a warning in timezone handling using the tzlocal library.  Thanks to [Tanner](https://github.com/tstenson) for the
+fix
+
+### Improvement
+- The new client keyword argument `show_clickhouse_errors` controls whether the full ClickHouse error (including possibly
+sensitive information) is displayed when there is an error in ClickHouse processing.  It defaults to True.  If False,
+the simple string 'The ClickHouse server returned an error.' will be displayed.  Closes https://github.com/ClickHouse/clickhouse-connect/issues/344.
+- Updated to Cython 3.0.10
+
+### Improvement
+
+## 0.7.8, 2024-04-14
+### Breaking Change
+- The default behavior of applying the client timezone if the GMT offset of the client matched the GMT offset
+of the server for the current time has been changed.  The new default is to **always** apply the server timezone
+unless the optional `apply_server_timezone` `get_client` parameter is explicitly set to `False`.  The previous behavior
+could cause confusing results where datetime values would be rendered in a Daylight Savings Time/Summer Time zone when
+DST was not active, and vice versa.
+
+## 0.7.7, 2024-04-03
+### Bug Fix
+- Fixed client side binding for complex types containing floats or integers that was broken in version 0.7.5.
+Closes https://github.com/ClickHouse/clickhouse-connect/issues/335.
+### Improvement
+- Added a `raw_stream` method to the Client the returns an io.Base.  Use this instead of the `raw_query` method
+with the (now removed) optional `stream` keyword boolean.  Thanks to [Martijn Thé](https://github.com/martijnthe) for
+the PR that highlighted the somewhat messy public API.
+
+## 0.7.6, 2024-04-01
+### Bug Fix
+- Fixed issue with SQLAlchemy Point type.  Closes https://github.com/ClickHouse/clickhouse-connect/issues/332.
+
+## 0.7.5, 2024-03-28
+### Bug Fixes
+- Fixed client side binding for Python format strings using `%d` (int) and `%f` (float) format patterns.  Closes
+https://github.com/ClickHouse/clickhouse-connect/issues/327
+- Allows empty `data` argument in the initializer of `ExternalFile` / `ExternalData` objects. Thanks to
+  [martijnthe](https://github.com/martijnthe) for the PR!
+
+## 0.7.4, 2024-03-24
+### Improvement
+- Added the new client method `query_arrow_stream` for streaming PyArrow queries from ClickHouse.  Big thanks to
+[NotSimone](https://github.com/NotSimone) for the feature and tests!  Closes https://github.com/ClickHouse/clickhouse-connect/issues/155.
+
+## 0.7.3, 2024-03-14
+### Improvement
+- Add summary field to Cursor object to retrieve the result of 'X-Clickhouse-Summary' header.  Thanks to 
+[elchyn-cheliabiyeu](https://github.com/elchyn-cheliabiyeu) for the PR!
+
+## 0.7.2, 2024-03-07
+### Bug Fixes
+- Inserts into columns with multibyte UTF-8 names were broken.  This has been fixed.  https://github.com/ClickHouse/clickhouse-connect/issues/312
+- If the result of applying the precedence of timezones to a column results in an explicit UTC timezone, the datetime object returned
+should now be timezone naive.  This should make the behavior consistent with the [documentation](https://clickhouse.com/docs/en/integrations/python#time-zones).
+Closes https://github.com/ClickHouse/clickhouse-connect/issues/308 (except for a documentation update)
+- Extraneous semicolons are automatically removed from the end of queries.  Addresses the most basic behavior in https://github.com/ClickHouse/clickhouse-connect/issues/310.
+
+### Performance Improvement
+- Pandas DataFrame returned from the client `query_df` method should be constructed somewhat faster in cases where the data returned in ClickHouse
+is in many small blocks.  Note that performance gains in this use case are somewhat limited because of the memory and copying cost of
+building a large DataFrame from many smaller ClickHouse Native block structures, so such performance problems should normally be addressed at the
+query or ClickHouse data storage level (by for example, reducing the number of partitions and/or shards referenced by the query).  This may partially
+address https://github.com/ClickHouse/clickhouse-connect/issues/307.
+
+## 0.7.1, 2024-02-28
+### Bug Fixes
+- Changed type hint of the `query` parameter in Client `query*` methods to `Optional[str]` to work correctly with type analyzers.
+This also highlights that using a query_context instead of a query in these methods is supported (and preferred for repeated queries).
+Thanks to [Avery Fischer](https://github.com/biggerfisch) for the PR!
+- Fixed sending a full table name to the `insert_file` tools function.  Closes https://github.com/ClickHouse/clickhouse-connect/issues/305
+
+## 0.7.0, 2024-01-22
+### Breaking Change
+- Python 3.7 builds are no longer part of the wheels deployed to PyPI
+
+### Bug Fix
+- Due to a change in default ClickHouse settings, inserts with "named" Tuple types no longer worked with ClickHouse
+version 24.1 and later.  This has been fixed.
+
+### Improvements
+- Some types of security and other proxies require additional query parameters on any call to ClickHouse server behind
+such a proxy.  Because the HTTPClient makes certain initialization queries to ClickHouse before any query parameters
+are set, it was difficult or impossible to create a Client successfully.  You can now modify the HTTPClient class level
+properties `params` and `valid_transport_settings` before calling `get_client` so that such "special" query parameters will be
+included even on initialization queries.  Thanks to [Aleksey Astafiev](https://github.com/aastafiev) for highlighting
+the problem and contributing a PR.
+- In some cases the user make want to disable urllib3 timeout settings `connect_timeout` and `send_receive_timeout` by
+setting them to none.  The same PR from Aleksey Astafiev now allows setting to values to `None`
+- Update to Cython 3.0.8
+
 
 ## 0.6.23, 2023-12-15
 ### Bug Fix
@@ -540,7 +811,7 @@ all that is needed, but multiple PoolManagers may be required for advanced serve
 * ClickHouse Connect no longer requires the popular `requests` library.  The `requests` library is built on
 [urllib3](https://pypi.org/project/urllib3/), but ClickHouse Connect was utilizing very little of the added functionality.
 Requests also has very restricted access to the `urllib3` streaming API, which made adding additional compression methods
-difficult.  Accordingly, the project now interfacdes to `urllib3` directly.  This should not change the public API (except as
+difficult.  Accordingly, the project now interfaces to `urllib3` directly.  This should not change the public API (except as
 noted in the warning above), but the HttpClient internals have changed to use the lower level library.
 * ClickHouse Connect now requires the [zstandard](https://pypi.org/project/zstandard/) and [lz4](https://pypi.org/project/lz4/)
 binding libraries to support zstd and lz4 compression.  ClickHouse itself uses these compression algorithms extensively and
